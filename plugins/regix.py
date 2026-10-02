@@ -157,9 +157,9 @@ async def turbo_sleep_with_status(user, m, sts, sleep_seconds, user_db=None):
         status_text = f"sleeping {remaining} s"
         text = TEXT.format(i.fetched, i.total_files, i.duplicate, i.deleted,
                            i.skip, i.filtered, status_text, percentage, "sʟᴇᴇᴘɪɴɢ")
-        progress = "█{0}{1}".format(
-            ''.join(["█" for _ in range(math.floor(int(percentage) / 4))]),
-            ''.join(["░" for _ in range(24 - math.floor(int(percentage) / 4))]))
+        progress = "●{0}{1}".format(
+            ''.join(["●" for _ in range(math.floor(int(percentage) / 4))]),
+            ''.join(["○" for _ in range(24 - math.floor(int(percentage) / 4))]))
         button = [[InlineKeyboardButton(progress, f'fwrdstatus#sleep#{remaining}#{percentage}#{sts.id}')]]
         button.append([InlineKeyboardButton('• ᴄᴀɴᴄᴇʟ', 'terminate_frwd')])
         await msg_edit(m, text, InlineKeyboardMarkup(button))
