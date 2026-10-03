@@ -36,6 +36,8 @@ class STS:
 
     def get(self, value=None, full=False):
         values = self.data.get(self.id)
+        if values is None:
+            return None
         if not full:
            return values.get(value)
         for k, v in values.items():
@@ -45,11 +47,16 @@ class STS:
     def add(self, key=None, value=1, time=False, start_time=None):
         if time:
           return self.data[self.id].update({'start': tm.time() if start_time is None else start_time})
-        self.data[self.id].update({key: self.get(key) + value}) 
+        self.data[self.id].update({key: self.get(key) + value})
+
+    def remove(self):
+        """Delete this STS entry from the shared STATUS dict."""
+        if self.id in self.data:
+            del self.data[self.id]
 
     def divide(self, no, by):
-       by = 1 if int(by) == 0 else by 
-       return int(no) / by 
+       by = 1 if int(by) == 0 else by
+       return int(no) / by
 
     async def get_data(self, user_id, bot_id=None):
         if bot_id is None:
@@ -60,19 +67,19 @@ class STS:
                     break
             if bot_id is None:
                 return None, None, None, None, None, None
-        
+
         bot = await db.get_bot(user_id, bot_id)
         if bot is None:
             return None, None, None, None, None, None
-        
+
         configs = bot.get('configs', {})
         filters = await db.get_filters(user_id, bot_id)
         size = configs.get('min_size', 0)
         max_size = configs.get('max_size', 0)
-        
+
         # 🔥 FIX: convert button to string to avoid TypeError
         button = parse_buttons(str(configs.get('button', '')))
-        
+
         return bot, configs.get('caption'), configs.get('forward_tag'), {
             'filters': filters,
             'keywords': configs.get('keywords'),
