@@ -3,10 +3,11 @@
 # Ask Doubt on telegram @KingVJ01
 
 import re
-import asyncio 
+import time
+import asyncio
 from .utils import STS
 from database import db
-from config import temp 
+from config import temp
 from script import Script
 from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait, ChannelInvalid, ChannelPrivate
@@ -17,17 +18,16 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQ
 @Client.on_message(filters.private & filters.command(["forward"]))
 async def run(bot, message):
     user_id = message.from_user.id
-    
+
     # ============ BOT SELECTION ============
     all_bots = await db.get_bots(user_id)
-    # 🔥 FILTER: only keep bots that have 'bot_id' field (migrated)
     enabled_bots = [b for b in all_bots if b.get('enabled', True) and b.get('bot_id') is not None]
-    
+
     if not enabled_bots:
         return await message.reply("<code>You don't have any enabled bots. Please add a bot using /settings</code>")
-    
+
     selected_bot = None
-    
+
     if len(enabled_bots) == 1:
         selected_bot = enabled_bots[0]
     else:
@@ -37,13 +37,13 @@ async def run(bot, message):
             buttons.append([InlineKeyboardButton(label, callback_data=f"select_bot_{b['bot_id']}")])
         buttons.append([InlineKeyboardButton("Cancel", callback_data="close_btn")])
         reply_markup = InlineKeyboardMarkup(buttons)
-        
+
         await bot.send_message(
             user_id,
             "**You have multiple bots available.**\n\nWhich one would you like to use for this forward?",
             reply_markup=reply_markup
         )
-        
+
         temp.BOT_SELECTION[user_id] = None
         for _ in range(60):
             await asyncio.sleep(1)
@@ -51,31 +51,30 @@ async def run(bot, message):
                 bot_id = temp.BOT_SELECTION[user_id]
                 selected_bot = await db.get_bot(user_id, bot_id)
                 break
-        
+
         if selected_bot is None:
             return await message.reply("Selection timed out or cancelled.")
         temp.BOT_SELECTION.pop(user_id, None)
-    
-    # 🔥 Ensure selected_bot has bot_id
+
     if not selected_bot or selected_bot.get('bot_id') is None:
         return await message.reply("Invalid bot selected. Please try again.")
-    
+
     bot_id = selected_bot['bot_id']
     is_bot = selected_bot['is_bot']
-    
+
     # ============ TARGET CHANNEL SELECTION ============
     channels = await db.get_user_channels(user_id)
     if not channels:
        return await message.reply_text("Please set a target channel in /settings before forwarding")
-    
+
     buttons = []
     btn_data = {}
-    
+
     if len(channels) > 1:
        for channel in channels:
           buttons.append([KeyboardButton(f"{channel['title']}")])
           btn_data[channel['title']] = channel['chat_id']
-       buttons.append([KeyboardButton("cancel")]) 
+       buttons.append([KeyboardButton("cancel")])
        _toid = await bot.ask(message.chat.id, Script.TO_MSG, reply_markup=ReplyKeyboardMarkup(buttons, one_time_keyboard=True, resize_keyboard=True))
        if _toid.text.startswith(('/', 'cancel')):
           return await message.reply_text(Script.CANCEL, reply_markup=ReplyKeyboardRemove())
@@ -86,13 +85,13 @@ async def run(bot, message):
     else:
        toid = channels[0]['chat_id']
        to_title = channels[0]['title']
-    
+
     # ============ SOURCE CHAT ============
     fromid = await bot.ask(message.chat.id, Script.FROM_MSG, reply_markup=ReplyKeyboardRemove())
     if fromid.text and fromid.text.startswith('/'):
         await message.reply(Script.CANCEL)
-        return 
-    
+        return
+
     if fromid.text and not fromid.forward_date:
         regex = re.compile("(https://)?(t\.me/|telegram\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")
         match = regex.match(fromid.text.replace("?single", ""))
@@ -109,12 +108,11 @@ async def run(bot, message):
            return await message.reply_text("**This may be a forwarded message from a group and sent by anonymous admin. Instead, please send the last message link from the group**")
     else:
         await message.reply_text("**Invalid!**")
-        return 
-    
-    # ============ VALIDATE CHAT ACCESS (FIXED) ============
+        return
+
+    # ============ VALIDATE CHAT ACCESS ============
     title = None
-    
-    # First try with the selected bot
+
     try:
         from .test import get_client
         if is_bot:
@@ -126,9 +124,7 @@ async def run(bot, message):
         title = chat_info.title
         await client.stop()
     except (ChannelPrivate, PrivateChat, ChannelInvalid) as e:
-        # Selected bot cannot access – try userbot (if available)
         userbots = await db.get_bots(user_id, is_bot=False)
-        # Filter userbots with bot_id
         userbot = next((u for u in userbots if u.get('enabled', True) and u.get('bot_id') is not None), None)
         if userbot:
             try:
@@ -137,7 +133,6 @@ async def run(bot, message):
                 chat_info = await client.get_chat(chat_id)
                 title = chat_info.title
                 await client.stop()
-                # Switch to userbot for this forward
                 selected_bot = userbot
                 bot_id = selected_bot['bot_id']
                 is_bot = False
@@ -150,8 +145,8 @@ async def run(bot, message):
             )
     except Exception as e:
         return await message.reply_text(f"Error: {str(e)[:100]}")
-    
-    # ============ START POINT (UNIVERSAL SKIPPING) ============
+
+    # ============ START POINT ============
     start_resp = await bot.ask(message.chat.id, Script.START_POINT_MSG)
     if start_resp.text and start_resp.text.startswith('/'):
         await message.reply(Script.CANCEL)
@@ -159,19 +154,14 @@ async def run(bot, message):
 
     start_id = None
 
-    # 1) Numeric (including 0)
     if start_resp.text and start_resp.text.isdigit():
         start_id = int(start_resp.text)
-        # 0 is valid - means start from beginning
-
-    # 2) Link
     elif start_resp.text:
         regex = re.compile(r"(https://)?(t\.me/|telegram\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")
         match = regex.match(start_resp.text.replace("?single", ""))
         if match:
             start_id = int(match.group(5))
         else:
-            # 3) Forwarded message
             if start_resp.forward_from_chat:
                 start_id = start_resp.forward_from_message_id
             else:
@@ -184,8 +174,6 @@ async def run(bot, message):
         await message.reply_text("❌ Could not determine starting message.")
         return
 
-    # Validate: start_id cannot be greater than last_msg_id
-    # But 0 is always valid (means start from beginning)
     if start_id != 0 and start_id > last_msg_id:
         await message.reply_text(
             f"❌ Starting message ID `{start_id}` is greater than last message ID `{last_msg_id}`. "
@@ -194,19 +182,21 @@ async def run(bot, message):
         return
 
     # ============ CREATE FORWARD SESSION ============
-    forward_id = f"{user_id}-{start_id}"  # using start_id for uniqueness
+    # ✅ FIX: include bot_id + timestamp so two bots forwarding for the same user
+    # with the same start_id get DIFFERENT STS keys.
+    forward_id = f"{user_id}-{bot_id}-{start_id}-{int(time.time() * 1000)}"
+
     buttons = [[
         InlineKeyboardButton('✅ Yes', callback_data=f"start_public_{forward_id}"),
         InlineKeyboardButton('❌ No', callback_data="close_btn")
     ]]
     reply_markup = InlineKeyboardMarkup(buttons)
-    
+
     bot_name = selected_bot['name']
     bot_uname = selected_bot['username'] if selected_bot['username'] else "None"
-    
-    # Show appropriate message based on start_id
+
     start_display = "0 (start from beginning)" if start_id == 0 else start_id
-    
+
     await message.reply_text(
         text=Script.DOUBLE_CHECK.format(
             botname=bot_name,
