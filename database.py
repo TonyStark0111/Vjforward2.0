@@ -78,7 +78,7 @@ class Db:
         return b_users
 
     # ==================== MULTI-BOT METHODS ====================
-    
+
     def _default_configs(self):
         return {
             'caption': None,
@@ -121,16 +121,16 @@ class Db:
         existing = await self.bots.find({'user_id': user_id}).to_list(length=None)
         if len(existing) >= 4:
             return False, "You can have at most 3 bots and 1 userbot (total 4)."
-        
+
         if not bot_data.get('is_bot', True):
             userbot_exists = await self.bots.find_one({'user_id': user_id, 'is_bot': False})
             if userbot_exists:
                 return False, "You already have a userbot. Only one userbot is allowed."
-        
+
         bot_id = await self._generate_bot_id(user_id)
         if bot_id is None:
             return False, "Bot limit reached."
-        
+
         doc = {
             'user_id': user_id,
             'bot_id': bot_id,
@@ -144,7 +144,7 @@ class Db:
             doc['token'] = bot_data['token']
         else:
             doc['session'] = bot_data['session']
-        
+
         await self.bots.insert_one(doc)
         return True, bot_id
 
@@ -209,27 +209,35 @@ class Db:
         channels = self.chl.find({"user_id": int(user_id)})
         return [channel async for channel in channels]
 
-    # ==================== FORWARD SESSION METHODS ====================
+    # ==================== FORWARD SESSION METHODS (BOT-AWARE) ====================
 
     async def add_frwd(self, user_id, bot_id):
+        # One active forward per (user, bot)
+        await self.nfy.delete_many({'user_id': int(user_id), 'bot_id': bot_id})
         return await self.nfy.insert_one({'user_id': int(user_id), 'bot_id': bot_id})
 
-    async def rmve_frwd(self, user_id=0, all=False):
-        data = {} if all else {'user_id': int(user_id)}
-        return await self.nfy.delete_many(data)
+    async def rmve_frwd(self, user_id=0, bot_id=None, all=False):
+        if all:
+            return await self.nfy.delete_many({})
+        query = {'user_id': int(user_id)}
+        if bot_id is not None:
+            query['bot_id'] = bot_id
+        return await self.nfy.delete_many(query)
 
     async def get_all_frwd(self):
         return self.nfy.find({})
 
     async def forwad_count(self):
-        c = await self.nfy.count_documents({})
-        return c
+        return await self.nfy.count_documents({})
 
-    async def is_forwad_exit(self, user):
-        u = await self.nfy.find_one({'user_id': user})
+    async def is_forwad_exit(self, user, bot_id=None):
+        query = {'user_id': user}
+        if bot_id is not None:
+            query['bot_id'] = bot_id
+        u = await self.nfy.find_one(query)
         return bool(u)
 
-    async def get_forward_details(self, user_id):
+    async def get_forward_details(self, user_id, bot_id=None):
         default = {
             'chat_id': None,
             'forward_id': None,
@@ -247,16 +255,27 @@ class Db:
             'filtered': 0,
             'bot_id': None
         }
-        user = await self.nfy.find_one({'user_id': int(user_id)})
+        query = {'user_id': int(user_id)}
+        if bot_id is not None:
+            query['bot_id'] = bot_id
+        user = await self.nfy.find_one(query)
         if user:
             return user.get('details', default)
         return default
 
     async def update_forward(self, user_id, details):
-        await self.nfy.update_one({'user_id': user_id}, {'$set': {'details': details}})
+        bot_id = details.get('bot_id')
+        query = {'user_id': int(user_id)}
+        if bot_id is not None:
+            query['bot_id'] = bot_id
+        await self.nfy.update_one(
+            query,
+            {'$set': {'details': details}},
+            upsert=True
+        )
 
     # ==================== MIGRATION ====================
-    
+
     async def migrate_old_bots(self):
         try:
             old_bots = await self.db.bots.find({}).to_list(length=None)
@@ -275,7 +294,7 @@ class Db:
                 await self.add_bot(user_id, bot_data)
         except:
             pass
-        
+
         try:
             old_userbots = await self.db.userbot.find({}).to_list(length=None)
             for old in old_userbots:
